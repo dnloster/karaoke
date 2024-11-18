@@ -22,7 +22,7 @@ function App({ Component, pageProps }) {
                     name="viewport"
                     content="width=device-width, initial-scale=1.0, maximum-scale=1.0,user-scalable=0"
                 />
-                <title>Hát Karaoke Youtube Online Miễn Phí - Karaoke Youtube Online</title>
+                <title>Hát Karaoke</title>
                 <meta name="title" content="Hát Karaoke Youtube Online Miễn Phí - Karaoke Youtube Online" />
                 <meta
                     name="description"

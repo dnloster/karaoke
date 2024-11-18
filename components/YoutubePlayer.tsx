@@ -12,18 +12,20 @@ import { useFullscreen, usePromise, useToggle } from "react-use";
 import YouTube, { YouTubePlayer } from "react-youtube";
 import { useKaraokeState } from "../hooks/karaoke";
 
+let secondScreen = null;
+
 function YoutubePlayer({ videoId, nextSong, className = "", extra = null }) {
     const {
         playlist,
-        curVideoId,
-        searchTerm,
-        isKaraoke,
-        activeIndex,
-        setPlaylist,
-        setCurVideoId,
-        setSearchTerm,
-        setIsKaraoke,
-        setActiveIndex,
+        // curVideoId,
+        // searchTerm,
+        // isKaraoke,
+        // activeIndex,
+        // setPlaylist,
+        // setCurVideoId,
+        // setSearchTerm,
+        // setIsKaraoke,
+        // setActiveIndex,
     } = useKaraokeState();
     const playerRef = useRef<YouTube>();
     const fullscreenRef = useRef<HTMLDivElement>();
@@ -37,12 +39,161 @@ function YoutubePlayer({ videoId, nextSong, className = "", extra = null }) {
     const [isMuted, setIsMuted] = useState(false);
     const mounted = usePromise();
 
+    const openSecondScreen = () => {
+        secondScreen = window.open("", "SecondScreen", "width=1920,height=1080");
+        secondScreen.document.write(
+            `<!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8" />
+                <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+                <title>Video Display</title>
+                <script src="https://www.youtube.com/iframe_api"></script>
+                <style>
+                    body {
+                        margin: 0;
+                        background: black;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        height: 100vh;
+                    }
+                    #player {
+                        width: 100%;
+                        height: 100%;
+                    }
+                </style>
+            </head>
+            <body style="margin: 0; overflow: hidden; background-color: black;">
+                <div id="player"></div>
+
+                <script>
+                    let player;
+                    window.addEventListener("message", (event) => {
+                        // Chỉ nhận thông điệp từ cùng một origin
+                        if (event.origin !== window.location.origin) return;
+
+                        const { type, videoId, state, currentTime } = event.data;
+
+                        if (type === "INIT_VIDEO") {
+                            loadVideo(videoId);
+                        }
+
+                        if (type === "SYNC_STATE") {
+                            syncPlayerState(state);
+                        }
+
+                        if (type === "SYNC_TIME") {
+                            syncVideoTime(currentTime);
+                        }
+                    });
+
+                    // Khởi tạo video trên màn hình phụ
+                    function loadVideo(videoId) {
+                        if (player) {
+                            player.loadVideoById(videoId);
+                        } else {
+                            player = new YT.Player("player", {
+                                videoId: videoId,
+                                playerVars: {
+                                    autoplay: 1,
+                                    controls: 0, // Không hiển thị điều khiển
+                                    modestbranding: 1,
+                                    mute: 1, // Tắt tiếng
+                                },
+                            });
+                        }
+                    }
+
+                    window.addEventListener("message", (event) => {
+                        const { type, videoId } = event.data;
+
+                        if (type === "INIT_VIDEO" && player) {
+                            console.log("Playing video ID:", videoId);
+                            player.loadVideoById(videoId);
+                        }
+                    });
+
+                    // Gửi thông điệp "READY" về cửa sổ chính
+                    window.opener.postMessage({ type: "READY" }, window.opener.location.origin);
+
+                    // Đồng bộ trạng thái video (play/pause)
+                    function syncPlayerState(state) {
+                        if (!player) return;
+                        if (state === YT.PlayerState.PLAYING) {
+                            player.playVideo();
+                        } else if (state === YT.PlayerState.PAUSED) {
+                            player.pauseVideo();
+                        }
+                    }
+
+                    // Đồng bộ thời gian video
+                    function syncVideoTime(time) {
+                        if (player) {
+                            player.seekTo(time, true);
+                        }
+                    }
+                </script>
+
+                
+            </body>
+            </html>`
+        );
+        secondScreen.document.close();
+        secondScreen.postMessage({ type: "INIT_VIDEO", videoId }, "*");
+    };
+
+    const playOnSecondScreen = () => {
+        if (secondScreen && !secondScreen.closed) {
+            secondScreen.postMessage({ type: "INIT_VIDEO", videoId }, window.location.origin);
+        } else {
+            openSecondScreen();
+        }
+    };
+
+    useEffect(() => {
+        const handleMessage = (event: MessageEvent) => {
+            if (event.data.type === "READY" && secondScreen) {
+                console.log("Second screen is ready");
+                secondScreen.postMessage({ type: "INIT_VIDEO", videoId }, window.location.origin);
+            }
+        };
+
+        window.addEventListener("message", handleMessage);
+        return () => window.removeEventListener("message", handleMessage);
+    }, [secondScreen, videoId]);
+
+    // Đồng bộ video với màn hình thứ hai (trạng thái và thời gian)
+    const syncVideoWithSecondScreen = () => {
+        const player = playerRef.current?.getInternalPlayer();
+        if (secondScreen && !secondScreen.closed && player) {
+            player.getPlayerState().then((state) => secondScreen.postMessage({ type: "SYNC_STATE", state }, "*"));
+
+            player
+                .getCurrentTime()
+                .then((currentTime) => secondScreen.postMessage({ type: "SYNC_TIME", currentTime }, "*"));
+        }
+    };
+
+    useEffect(() => {
+        const player = playerRef.current?.getInternalPlayer();
+        if (player) {
+            updatePlayerState(player);
+        }
+
+        // Khi videoId thay đổi, thông báo cho cửa sổ phụ
+        if (secondScreen && !secondScreen.closed) {
+            secondScreen.postMessage({ type: "INIT_VIDEO", videoId }, "*");
+        }
+    }, [videoId]);
+
     async function updatePlayerState(player: YouTubePlayer) {
         if (!player) return;
         const [muteState, playerState] = await mounted(Promise.allSettled([player.isMuted(), player.getPlayerState()]));
         // These lines will not execute if this component gets unmounted.
         if (muteState.status === "fulfilled") setIsMuted(muteState.value);
         if (playerState.status === "fulfilled") setPlayerState(playerState.value);
+        syncVideoWithSecondScreen();
     }
 
     useEffect(() => {
@@ -51,10 +202,15 @@ function YoutubePlayer({ videoId, nextSong, className = "", extra = null }) {
     }, [videoId]);
 
     useEffect(() => {
+        const interval = setInterval(syncVideoWithSecondScreen, 1000);
+        return () => clearInterval(interval);
+    }, []);
+
+    useEffect(() => {
         const interval = setInterval(() => {
             setShowMarquee(true);
             setTimeout(() => setShowMarquee(false), 20000);
-        }, 30000);
+        }, 50000);
 
         return () => clearInterval(interval); // Dọn dẹp interval
     }, []);
@@ -191,7 +347,7 @@ function YoutubePlayer({ videoId, nextSong, className = "", extra = null }) {
                         {playlist.length && showMarquee && (
                             <div
                                 className={`absolute bottom-10 left-0 w-full text-yellow-400 p-2 rounded-md animate-marquee whitespace-nowrap text-shadow-black ${
-                                    !isFullscreen ? "texl-lg" : "text-4xl"
+                                    !isFullscreen ? "texl-lg" : "text-6xl"
                                 }`}
                             >
                                 Bài tiếp theo: {playlist[0].title}
@@ -200,6 +356,7 @@ function YoutubePlayer({ videoId, nextSong, className = "", extra = null }) {
                     </>
                 )}
             </div>
+
             <div className="flex-shrink-0 flex flex-row md:w-full p-1 items-center">
                 {playPauseBtn.concat(playerBtns, muteBtn).map((btn) => (
                     <button
@@ -211,6 +368,9 @@ function YoutubePlayer({ videoId, nextSong, className = "", extra = null }) {
                         {btn.label}
                     </button>
                 ))}
+                <button onClick={playOnSecondScreen} className="btn">
+                    Mở màn hình phụ
+                </button>
                 {extra}
             </div>
         </div>
